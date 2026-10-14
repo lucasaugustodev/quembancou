@@ -15,7 +15,7 @@ const normalize = value => String(value ?? '').normalize('NFD').replace(/[\u0300
 const titleCase = value => String(value ?? '').toLocaleLowerCase('pt-BR').replace(/(^|[\s/-])([\p{L}\d])/gu, (_, space, letter) => space + letter.toLocaleUpperCase('pt-BR')).replace(/\b(De|Da|Do|Das|Dos|E)\b/g, word => word.toLowerCase());
 const profileUrl = id => `candidatos/${encodeURIComponent(id)}/`;
 const officeLabels = { federal_deputy: 'Deputado federal', senator: 'Senado', president: 'Presidência' };
-const state = { data: null, office: 'all', uf: 'all', party: 'all', search: '', sort: 'votes', candidateLimit: 12, donorLimit: 5, fefcLimit: 5, boostLimit: 5, spenderLimit: 5, noFundLimit: 5, lowBoostLimit: 5 };
+const state = { data: null, office: 'all', uf: 'all', party: 'all', search: '', sort: 'votes', candidateLimit: 12, donorLimit: 5, donationsLimit: 5, fefcLimit: 5, boostLimit: 5, spenderLimit: 5, noFundLimit: 5, lowBoostLimit: 5 };
 const candidateById = new Map();
 
 function avatar(candidate, cssClass = 'ranking-avatar') {
@@ -50,6 +50,7 @@ function initializeOverview(data) {
   $('party-filter').innerHTML = '<option value="all">Todos os partidos</option>' + parties.map(party => `<option value="${escape(party)}">${escape(party)}</option>`).join('');
   $('snapshot-method').textContent = `Extração de ${date(data.snapshot.generated_date)}. As entregas das campanhas deste recorte variam de ${date(data.snapshot.submitted_date_range.from)} a ${date(data.snapshot.submitted_date_range.to)}; o período de cada candidatura está na sua página. Relatórios financeiros e contas parciais não são contas finais. Os valores podem ser atualizados ou retificados. Ausência de informação aparece como “sem dados”. Os totais da dashboard somam as declarações disponíveis; repasses entre campanhas podem aparecer em mais de uma conta, e essa soma não representa o custo total das eleições.`;
   $('donors-method').textContent = `O recorte tem ${number(data.totals.individual_donor_count)} pessoas físicas doadoras diretas. Somamos somente doações financeiras diretas de cada pessoa às ${count} candidaturas selecionadas. Recursos próprios, repasses partidários, financiamento coletivo intermediado e rendimentos financeiros ficam fora deste ranking. A lista exibe os ${data.rankings.individual_donors.length} maiores totais da seleção, e não todas as doações do Brasil. Clique em um doador para ver as campanhas que receberam seus recursos.`;
+  $('donors-method').textContent += ' Em “Quem mais recebeu doações”, somamos essas mesmas doações financeiras diretas por candidatura e ordenamos do maior para o menor total recebido.';
   $('overview-sources').replaceChildren();
   for (const source of data.sources) {
     const a = document.createElement('a');
@@ -74,13 +75,16 @@ function renderDonorRanking() {
 
 function renderCandidateRanking(kind) {
   const isFefc = kind === 'fefc';
-  const rows = [...state.data.rankings[isFefc ? 'fefc_recipients' : 'content_boost']];
-  const field = isFefc ? 'financial_cents' : 'paid_cents';
+  const isDonations = kind === 'donations';
+  const rows = isDonations
+    ? state.data.candidates.filter(candidate => Number.isFinite(candidate.totals.direct_person_financial_cents) && candidate.totals.direct_person_financial_cents > 0).map(candidate => ({ candidate_id: candidate.id, name: candidate.name, financial_cents: candidate.totals.direct_person_financial_cents }))
+    : [...state.data.rankings[isFefc ? 'fefc_recipients' : 'content_boost']];
+  const field = isFefc || isDonations ? 'financial_cents' : 'paid_cents';
   rows.sort((a, b) => (b[field] ?? -1) - (a[field] ?? -1) || a.name.localeCompare(b.name, 'pt-BR'));
-  const limit = isFefc ? state.fefcLimit : state.boostLimit;
+  const limit = state[kind + 'Limit'];
   $(kind + '-ranking').innerHTML = rows.slice(0, limit).map((row, i) => {
     const candidate = candidateById.get(row.candidate_id) || row;
-    return `<li><a class="ranking-row" href="${profileUrl(row.candidate_id)}"><span class="ranking-number">${i + 1}</span>${avatar(candidate)}<span class="ranking-person"><strong>${escape(titleCase(candidate.ballot_name || candidate.name))}</strong><small>${escape(candidate.party)} · ${escape(officeLabels[candidate.group] || candidate.office)}${candidate.state !== 'BR' ? ' · ' + escape(candidate.state) : ''}</small></span><span class="ranking-amount"><strong title="${escape(money(row[field]))}">${escape(shortMoney(row[field]))}</strong><small>${isFefc ? 'recebido' : 'pago'} ↗</small></span></a></li>`;
+    return `<li><a class="ranking-row" href="${profileUrl(row.candidate_id)}"><span class="ranking-number">${i + 1}</span>${avatar(candidate)}<span class="ranking-person"><strong>${escape(titleCase(candidate.ballot_name || candidate.name))}</strong><small>${escape(candidate.party)} · ${escape(officeLabels[candidate.group] || candidate.office)}${candidate.state !== 'BR' ? ' · ' + escape(candidate.state) : ''}</small></span><span class="ranking-amount"><strong title="${escape(money(row[field]))}">${escape(shortMoney(row[field]))}</strong><small>${isFefc || isDonations ? 'recebido' : 'pago'} ↗</small></span></a></li>`;
   }).join('') || '<li class="empty-state">Sem registros disponíveis.</li>';
   $('more-' + kind).hidden = limit >= rows.length;
 }
@@ -170,6 +174,7 @@ for (const [id, field] of [['state-filter', 'uf'], ['party-filter', 'party'], ['
 $('candidate-search').addEventListener('input', event => { if (!state.data) return; state.search = event.target.value; state.candidateLimit = 12; renderCandidates(); });
 $('more-candidates').addEventListener('click', () => { state.candidateLimit += 12; renderCandidates(); });
 $('more-donors').addEventListener('click', () => { state.donorLimit += 5; renderDonorRanking(); });
+$('more-donations').addEventListener('click', () => { state.donationsLimit += 5; renderCandidateRanking('donations'); });
 $('more-fefc').addEventListener('click', () => { state.fefcLimit += 5; renderCandidateRanking('fefc'); });
 $('more-boost').addEventListener('click', () => { state.boostLimit += 5; renderCandidateRanking('boost'); });
 $('more-spenders').addEventListener('click', () => { state.spenderLimit += 5; renderSpending(); });
@@ -187,12 +192,12 @@ async function initialize() {
     const data = await response.json();
     if (data.election_year !== 2026 || data.candidates.length !== 105 || new Set(data.candidates.map(candidate => candidate.id)).size !== 105) throw new Error('Recorte inválido');
     state.data = data;
-    initializeOverview(data); renderDonorRanking(); renderCandidateRanking('fefc'); renderCandidateRanking('boost'); renderVoteRankings(); renderSpending(); renderCandidates();
+    initializeOverview(data); renderDonorRanking(); renderCandidateRanking('fefc'); renderCandidateRanking('boost'); renderCandidateRanking('donations'); renderVoteRankings(); renderSpending(); renderCandidates();
     document.documentElement.dataset.ready = 'true';
   } catch (error) {
     $('snapshot-label').textContent = 'Não foi possível carregar o recorte. Recarregue a página ou consulte a fonte oficial.';
     $('candidate-grid').innerHTML = '<div class="catalog-empty">Os dados estão indisponíveis nesta consulta. <a href="#metodologia">Consulte as fontes oficiais.</a></div>';
-    for (const id of ['donor-ranking', 'fefc-ranking', 'boost-ranking', 'no-fund-ranking', 'low-boost-ranking', 'spenders-ranking']) $(id).innerHTML = '<li class="empty-state">Dados indisponíveis nesta consulta.</li>';
+    for (const id of ['donor-ranking', 'fefc-ranking', 'boost-ranking', 'donations-ranking', 'no-fund-ranking', 'low-boost-ranking', 'spenders-ranking']) $(id).innerHTML = '<li class="empty-state">Dados indisponíveis nesta consulta.</li>';
     console.error('Falha ao carregar a dashboard:', error.message);
     document.documentElement.dataset.ready = 'error';
   }
