@@ -1,0 +1,7 @@
+research/
+.preview/
+node_modules/
+__pycache__/
+*.pyc
+*.zip
+*.tar.gz
